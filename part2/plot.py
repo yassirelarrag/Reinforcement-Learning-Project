@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
-# This file uses the folder of the tensorflow logs during training to plot the learning 
+# This file uses the folder of the training logs to plot the learning 
 # curves of the PPO on the source and the SAC model on the source using no Domain Randomization 
 # techniques, using UDR, and using ADR as well as the sac model trained on the target domain.
 
