@@ -1,0 +1,132 @@
+import argparse
+import os
+import gymnasium as gym
+import torch
+import numpy as np
+import random
+from stable_baselines3 import SAC, PPO
+from gymnasium.wrappers import RecordVideo
+import panda_gym  
+
+## Reproducing Results
+
+# To evaluate a trained policy and reproduce the results for a specific
+# configuration,run the following command using the desired configuration. 
+# python eval_sb3.py --algo <ALGORITHM> --model-path "<PATH_TO_MODEL>" --episodes <NUM_EPISODES> --env-type <ENV_TYPE>
+# Example: python eval_sb3.py --algo sac --model-path ".\final_sac_models\sac_push_adr_source_500k.zip" --episodes 50 --env-type target  
+# This uses the SAC model saved in final_sac_models trained on the source domain using ADR, 
+# to evaluate ots performance on the target domain using  episodes
+
+def set_seed(seed: int) -> None:
+    """Set seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+def evaluate(model_path: str, algo: str, n_episodes: int, deterministic: bool, render: bool, env_type: str) -> None:
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(
+            f"Model file not found: {model_path}. "
+            "Make sure you saved your trained model with model.save(...)."
+        )
+    set_seed(42)
+    render_mode = "human" if render else "rgb_array"
+    env = gym.make("PandaPush-v3", render_mode=render_mode, type=env_type, reward_type="dense")
+
+
+    #TODO: load model here
+    if algo.lower() == "ppo":
+        model = PPO.load(model_path, env=env)
+    elif algo.lower() == "sac":
+        model = SAC.load(model_path, env=env)
+    else:
+        raise ValueError(f"Unknown algorithm: {algo}")
+    
+
+    episode_returns = []
+    successes = []
+
+    for episode in range(1, n_episodes + 1):
+        obs, info = env.reset()
+        terminated = False
+        truncated = False
+        episode_return = 0.0
+
+        while not (terminated or truncated):
+            action, _ = model.predict(obs, deterministic=deterministic) #TODO: get action from the model
+            obs, reward, terminated, truncated, info = env.step(action)
+            episode_return += float(reward)
+
+        episode_returns.append(episode_return)
+
+        if isinstance(info, dict) and "is_success" in info:
+            successes.append(float(info["is_success"]))
+
+        print(f"Episode {episode:03d} | return = {episode_return:.3f}")
+
+    env.close()
+
+    returns = np.array(episode_returns, dtype=np.float32)
+    print("\n=== Evaluation summary ===")
+    print(f"Episodes: {n_episodes}")
+    print(f"Mean return: {returns.mean():.3f}")
+    print(f"Std return:  {returns.std():.3f}")
+    print(f"Min return:  {returns.min():.3f}")
+    print(f"Max return:  {returns.max():.3f}")
+
+    if successes:
+        success_rate = float(np.mean(successes))
+        print(f"Success rate: {success_rate:.2%}")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Evaluate SAC on PandaPush-v3")
+    parser.add_argument(
+        "--algo", 
+        type=str, 
+        required=True,
+        choices=["ppo", "sac"], 
+        help="Algorithm used")
+    parser.add_argument(
+        "--model-path",
+        type=str,
+        required=True,
+        help="Path to a PPO model zip file (e.g., ppo_panda_push.zip)",
+    )
+    parser.add_argument(
+        "--episodes", 
+        type=int, 
+        default=500, 
+        help="Number of eval episodes"
+    )
+    parser.add_argument(
+        "--stochastic",
+        action="store_true",
+        help="Use stochastic policy sampling instead of deterministic actions",
+    )
+    parser.add_argument(
+        "--render",
+        action="store_true",
+        help="Render with a window (render_mode='human')",
+    )
+    parser.add_argument(
+        "--env-type",
+        type=str, default="target",
+        choices=["source", "target"],
+        help="Type of environment to evaluate on (default: target)",
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    evaluate(
+        model_path=args.model_path,
+        algo=args.algo,
+        n_episodes=args.episodes,
+        deterministic=not args.stochastic,
+        render=args.render,
+        env_type=args.env_type,
+    )
